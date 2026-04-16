@@ -1,0 +1,6 @@
+unsloth
+torch
+transformers>=4.34.0
+accelerate>=0.20.0
+sentencepiece
+protobuf
