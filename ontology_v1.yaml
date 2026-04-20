@@ -1,0 +1,925 @@
+simulation_domain:
+
+  SetGridsize:
+    kind: function
+    params:
+      - name: nx
+        type: int
+        constraint: "nx >= 1; power-of-2 strongly recommended for FFT efficiency"
+      - name: ny
+        type: int
+      - name: nz
+        type: int
+    required: true
+    depends_on: []
+    notes: >
+      Must be called before SetCellsize. Together these two calls define the
+      simulation volume. All three dimensions must be at least 1.
+      Using powers of 2 is strongly recommended because MuMax3 uses FFTs
+      internally for the demagnetisation field calculation.
+
+  SetCellsize:
+    kind: function
+    params:
+      - name: dx
+        type: float
+        units: m
+        typical_range: [1.0e-10, 2.0e-8]
+        constraint: "dx <= 2 * exchange_length for accurate exchange physics"
+      - name: dy
+        type: float
+        units: m
+      - name: dz
+        type: float
+        units: m
+    required: true
+    depends_on: [SetGridsize]
+    notes: >
+      Physical size of each simulation cell. The cell size must be smaller than
+      twice the exchange length l_ex = sqrt(2*Aex / (mu0 * Msat^2)) to correctly
+      resolve exchange interactions. For Permalloy, l_ex ≈ 5.7 nm, so cell size
+      should be < 11 nm.
+
+  SetPBC:
+    kind: function
+    params:
+      - name: x
+        type: int
+        constraint: "0 = no PBC, positive integer = number of repetitions"
+      - name: y
+        type: int
+      - name: z
+        type: int
+    required: false
+    notes: >
+      Periodic boundary conditions. SetPBC(0,0,0) is the default (open boundaries).
+      SetPBC(8,8,0) repeats the simulation volume 8 times in x and y for the
+      demagnetisation field calculation, approximating an infinite film.
+
+
+# ─── Layer 2: Geometry ────────────────────────────────────────────────────────
+
+geometry:
+
+  SetGeom:
+    kind: function
+    params:
+      - name: shape
+        type: shape_expression
+        notes: "Result of a shape constructor call"
+    required: false
+    notes: >
+      Apply a shape mask. Cells outside the shape are disabled (treated as
+      vacuum). If not called, the full rectangular grid is the simulation volume.
+
+  # Shape constructors
+  cylinder:
+    kind: function
+    params:
+      - name: diameter
+        type: float
+        units: m
+      - name: height
+        type: float
+        units: m
+    returns: shape
+    notes: "Circular cylinder centred on the grid origin."
+
+  ellipse:
+    kind: function
+    params:
+      - name: diameterX
+        type: float
+        units: m
+      - name: diameterY
+        type: float
+        units: m
+    returns: shape
+    notes: "2D ellipse (infinite in z). Use with appropriate nz=1."
+
+  circle:
+    kind: function
+    params:
+      - name: diameter
+        type: float
+        units: m
+    returns: shape
+    notes: "2D circle = ellipse with equal diameters."
+
+  rect:
+    kind: function
+    params:
+      - name: width
+        type: float
+        units: m
+      - name: height
+        type: float
+        units: m
+    returns: shape
+    notes: "2D rectangle centred at origin."
+
+  xrange:
+    kind: function
+    params:
+      - name: x_min
+        type: float
+        units: m
+      - name: x_max
+        type: float
+        units: m
+    returns: shape
+    notes: "Slab between x_min and x_max. Extends infinitely in y and z."
+
+  yrange:
+    kind: function
+    params:
+      - name: y_min
+        type: float
+        units: m
+      - name: y_max
+        type: float
+        units: m
+    returns: shape
+
+  zrange:
+    kind: function
+    params:
+      - name: z_min
+        type: float
+        units: m
+      - name: z_max
+        type: float
+        units: m
+    returns: shape
+
+  universe:
+    kind: constant
+    type: shape
+    notes: "The entire simulation volume. Equivalent to no SetGeom() call."
+
+  defRegion:
+    kind: function
+    params:
+      - name: id
+        type: int
+        constraint: "0 to 255"
+      - name: shape
+        type: shape_expression
+    required: false
+    notes: >
+      Assign an integer region ID to cells within a shape. Region IDs are used
+      to set per-region material properties with SetRegion() syntax.
+      Region 0 is the default (whole geometry).
+
+
+# ─── Layer 3: Material Model ──────────────────────────────────────────────────
+
+material:
+
+  Msat:
+    kind: parameter
+    type: float
+    units: "A/m"
+    typical_range: [1.0e5, 2.0e6]
+    absolute_range: [1.0e3, 3.0e6]
+    required: true
+    depends_on: []
+    notes: >
+      Saturation magnetisation. Typical values:
+        Permalloy: 800e3 A/m
+        CoFeB: 1100e3 A/m
+        YIG: 140e3 A/m
+        Fe: 1700e3 A/m
+      Setting Msat=0 in a region disables magnetism there.
+
+  Aex:
+    kind: parameter
+    type: float
+    units: "J/m"
+    typical_range: [1.0e-13, 1.0e-10]
+    required: true
+    depends_on: []
+    notes: >
+      Exchange stiffness. Typical values:
+        Permalloy: 13e-12 J/m
+        CoFeB: 20e-12 J/m
+        YIG: 3.7e-12 J/m
+        Fe: 21e-12 J/m
+
+  alpha:
+    kind: parameter
+    type: float
+    units: "dimensionless"
+    typical_range: [1.0e-4, 0.5]
+    absolute_range: [1.0e-5, 1.0]
+    required: true
+    notes: >
+      Gilbert damping constant. Must be strictly positive.
+      High alpha (0.3-0.5) is often used temporarily during relax() to speed
+      up convergence. It should be set back to the physical value before run().
+      Physical values:
+        Permalloy: 0.01
+        CoFeB: 0.005
+        YIG: 0.0002 (exceptionally low)
+        Fe: 0.002
+
+  Ku1:
+    kind: parameter
+    type: float
+    units: "J/m3"
+    typical_range: [1.0e3, 1.0e7]
+    required: false
+    depends_on: [anisU]
+    notes: >
+      First-order uniaxial anisotropy constant.
+      Positive Ku1 = easy AXIS anisotropy (magnetisation prefers the anisU direction).
+      Negative Ku1 = easy PLANE anisotropy.
+      MUST be used together with anisU to specify the easy axis direction.
+
+  anisU:
+    kind: parameter
+    type: vector
+    units: "dimensionless (unit vector)"
+    required: false
+    depends_on: []
+    notes: >
+      Easy axis direction for uniaxial anisotropy. Must be a unit vector.
+      Common values:
+        vector(0, 0, 1) = perpendicular to film plane (PMA)
+        vector(1, 0, 0) = in-plane along x
+
+  Ku2:
+    kind: parameter
+    type: float
+    units: "J/m3"
+    required: false
+    depends_on: [Ku1, anisU]
+    notes: "Second-order uniaxial anisotropy. Usually much smaller than Ku1."
+
+  Kc1:
+    kind: parameter
+    type: float
+    units: "J/m3"
+    required: false
+    depends_on: [anisC1, anisC2]
+    notes: "First-order cubic anisotropy constant."
+
+  anisC1:
+    kind: parameter
+    type: vector
+    required: false
+    notes: "First cubic anisotropy axis."
+
+  anisC2:
+    kind: parameter
+    type: vector
+    required: false
+    notes: "Second cubic anisotropy axis (perpendicular to anisC1)."
+
+  Temp:
+    kind: parameter
+    type: float
+    units: K
+    typical_range: [0, 1000]
+    absolute_range: [0, 2000]
+    required: false
+    notes: >
+      Temperature for thermal fluctuations (stochastic LLG).
+      Temp=0 (default) means no thermal noise.
+      Setting Temp > 0 adds a random thermal field whose magnitude is
+      derived from the fluctuation-dissipation theorem.
+
+  Xi:
+    kind: parameter
+    type: float
+    units: "dimensionless"
+    typical_range: [0.01, 0.3]
+    required: false
+    depends_on: []
+    notes: "Non-adiabaticity parameter for spin-transfer torque. See also: xi parameter."
+
+
+# ─── Layer 4: Physics Interactions ────────────────────────────────────────────
+
+physics:
+
+  EnableDemag:
+    kind: function
+    params:
+      - name: enabled
+        type: bool
+    required: false
+    notes: >
+      Enable or disable demagnetisation field calculation.
+      Default: enabled (True). Disabling speeds up simulations but is only
+      physically valid for very small samples (< exchange length in all dimensions).
+
+  Dind:
+    kind: parameter
+    type: float
+    units: "J/m2"
+    typical_range: [0, 5.0e-3]
+    absolute_range: [0, 1.0e-2]
+    required: false
+    depends_on: [Msat, Aex]
+    notes: >
+      Interfacial (Néel-type) Dzyaloshinskii-Moriya interaction constant.
+      Used for HM/FM bilayers (e.g., Pt/CoFeB) where broken inversion symmetry
+      at the interface generates DMI. Stabilises Néel skyrmions.
+      Positive Dind favours clockwise Néel texture; negative favours counter-clockwise.
+
+  Dbulk:
+    kind: parameter
+    type: float
+    units: "J/m2"
+    typical_range: [0, 5.0e-3]
+    required: false
+    depends_on: [Msat, Aex]
+    notes: >
+      Bulk (Bloch-type) DMI. Relevant for B20 materials (MnSi, FeGe).
+      Do not use both Dind and Dbulk simultaneously for the same material.
+
+  B_ext:
+    kind: parameter
+    type: vector
+    units: T
+    typical_range: [-1.0, 1.0]
+    required: false
+    notes: >
+      External applied magnetic field vector in Tesla.
+      Can be a constant vector:  B_ext = vector(0, 0, 0.01)
+      Or a time-dependent expression using the variable t (current time):
+        B_ext = vector(0.01*sin(2*pi*5e9*t), 0, 0.1)
+      Or using pulse():
+        B_ext = vector(0.01*pulse(rise, flat, fall), 0, 0)
+
+  E_Zeeman:
+    kind: quantity
+    type: float
+    units: J
+    notes: "Zeeman (field) energy. Can be added to table output."
+
+  E_demag:
+    kind: quantity
+    type: float
+    units: J
+    notes: "Demagnetisation energy."
+
+  E_exch:
+    kind: quantity
+    type: float
+    units: J
+    notes: "Exchange energy."
+
+  E_anis:
+    kind: quantity
+    type: float
+    units: J
+    notes: "Anisotropy energy."
+
+  E_dmi:
+    kind: quantity
+    type: float
+    units: J
+    notes: "DMI energy."
+
+  E_therm:
+    kind: quantity
+    type: float
+    units: J
+    notes: "Thermal fluctuation energy."
+
+  E_total:
+    kind: quantity
+    type: float
+    units: J
+    notes: "Total energy (sum of all contributions)."
+
+
+# ─── Layer 5: Spin Transport (STT and SOT) ────────────────────────────────────
+
+spin_transport:
+
+  Jc:
+    kind: parameter
+    type: vector
+    units: "A/m2"
+    typical_range: [1.0e10, 1.0e13]
+    absolute_range: [0, 5.0e13]
+    required: false
+    notes: >
+      Charge current density vector. Used for both STT and SOT calculations.
+      For STT: current flows through the magnetic layer along its long axis.
+      For SOT: current flows in the heavy-metal underlayer (conventionally along x).
+
+  pol:
+    kind: parameter
+    type: float
+    units: "dimensionless"
+    typical_range: [0.3, 0.8]
+    absolute_range: [0, 1.0]
+    required: false
+    depends_on: [Jc]
+    notes: "Spin polarisation of the current (0 = no spin transfer, 1 = fully polarised)."
+
+  xi:
+    kind: parameter
+    type: float
+    units: "dimensionless"
+    typical_range: [0.01, 0.5]
+    required: false
+    depends_on: [Jc, pol]
+    notes: >
+      Non-adiabaticity parameter for STT. Ratio of non-adiabatic to adiabatic
+      torque. For Permalloy, typically 0.01–0.05.
+      Note: 'xi' here is the non-adiabaticity beta. The symbol xi is also used
+      for non-adiabaticity in some references.
+
+  lambda:
+    kind: parameter
+    type: float
+    required: false
+    notes: "Lambda parameter in the spin-torque expression. Usually set to 1."
+
+  epsilonprime:
+    kind: parameter
+    type: float
+    required: false
+    notes: "Field-like torque coefficient in the spin-torque expression."
+
+  xi_DL:
+    kind: parameter
+    type: float
+    units: "dimensionless"
+    typical_range: [0.05, 0.4]
+    required: false
+    depends_on: [Jc]
+    notes: >
+      Damping-like (anti-damping) SOT efficiency (also called θ_SH or ξ_DL).
+      Relates the charge current in the HM to the effective torque on the FM.
+      Positive xi_DL drives magnetisation in the direction of Jc × m.
+      Typical for Pt: 0.1–0.2.
+
+  xi_FL:
+    kind: parameter
+    type: float
+    units: "dimensionless"
+    required: false
+    depends_on: [Jc]
+    notes: "Field-like SOT efficiency. Often much smaller than xi_DL. Can be 0."
+
+
+# ─── Layer 6: Initialisation ──────────────────────────────────────────────────
+
+initialisation:
+
+  m:
+    kind: quantity
+    type: vector_field
+    notes: >
+      The magnetisation field. A 3D vector field normalised to |m| = 1.
+      Assign an initialisation expression before relax() or run():
+        m = uniform(1, 0, 0)
+        m = twoDomain(1, 0, 0, -1, 0, 0)
+        m = vortex(1, 1)
+      Also used to save the current state: save(m)
+      And to read back from file: m = loadFile("state.ovf")
+
+  uniform:
+    kind: function
+    params:
+      - name: mx
+        type: float
+        constraint: "mx^2 + my^2 + mz^2 = 1 (will be normalised)"
+      - name: my
+        type: float
+      - name: mz
+        type: float
+    returns: vector_field
+    notes: "All cells point in the same direction (mx, my, mz)."
+
+  vortex:
+    kind: function
+    params:
+      - name: circulation
+        type: int
+        constraint: "+1 or -1"
+      - name: polarisation
+        type: int
+        constraint: "+1 or -1"
+    returns: vector_field
+    notes: "Curling in-plane vortex state with up or down core."
+
+  twoDomain:
+    kind: function
+    params:
+      - name: mx1
+        type: float
+      - name: my1
+        type: float
+      - name: mz1
+        type: float
+      - name: mx2
+        type: float
+      - name: my2
+        type: float
+      - name: mz2
+        type: float
+    returns: vector_field
+    notes: >
+      Two domains: left half of the sample in direction (mx1, my1, mz1),
+      right half in (mx2, my2, mz2). Separated at x = 0 with an approximate
+      domain wall profile.
+
+  randomMag:
+    kind: function
+    returns: vector_field
+    notes: "Uniformly random magnetisation directions. Not reproducible."
+
+  randomMagSeed:
+    kind: function
+    params:
+      - name: seed
+        type: int
+    returns: vector_field
+    notes: "Random magnetisation with fixed seed for reproducibility."
+
+
+# ─── Layer 7: Solver Control ──────────────────────────────────────────────────
+
+solver:
+
+  relax:
+    kind: function
+    params: []
+    required: true
+    notes: >
+      Find a local energy minimum using adaptive-timestep LLG with the current
+      alpha value. Stops when the total torque is below a threshold (dE/dt ≈ 0).
+      Should be called before run() to ensure the simulation starts from a
+      physically reasonable state. Often called with artificially high alpha
+      (0.3–0.5) for fast convergence.
+
+  minimize:
+    kind: function
+    params: []
+    notes: >
+      Conjugate-gradient energy minimiser. Faster than relax() for some
+      geometries. Does not include precession (sets alpha very high internally).
+
+  run:
+    kind: function
+    params:
+      - name: duration
+        type: float
+        units: s
+        constraint: "> 0"
+    required: false
+    notes: >
+      Advance the simulation by 'duration' seconds using the adaptive-timestep
+      RK45 solver. Autosave and tableautosave outputs fire during this call.
+
+  RunWhile:
+    kind: function
+    params:
+      - name: condition
+        type: bool_expression
+    notes: "Run until 'condition' becomes false. E.g.: RunWhile(t < 10e-9)"
+
+  steps:
+    kind: function
+    params:
+      - name: n
+        type: int
+    notes: "Advance exactly n timesteps (adaptive timestep, n steps total)."
+
+  Fixdt:
+    kind: parameter
+    type: float
+    units: s
+    required: false
+    notes: "Fix the timestep to this value. 0 = adaptive (default)."
+
+  MinDt:
+    kind: parameter
+    type: float
+    units: s
+    required: false
+    notes: "Minimum allowed adaptive timestep."
+
+  MaxDt:
+    kind: parameter
+    type: float
+    units: s
+    required: false
+    notes: "Maximum allowed adaptive timestep."
+
+  MaxErr:
+    kind: parameter
+    type: float
+    required: false
+    notes: "Maximum allowed error per timestep for adaptive solver. Default: 1e-4."
+
+  t:
+    kind: quantity
+    type: float
+    units: s
+    notes: "Current simulation time. Read-only."
+
+
+# ─── Layer 8: Output ──────────────────────────────────────────────────────────
+
+output:
+
+  save:
+    kind: function
+    params:
+      - name: quantity
+        type: quantity_expression
+    notes: >
+      Save the current value of 'quantity' once, right now.
+      Typically used after relax() to save the ground state:
+        relax()
+        save(m)
+      Output goes to a numbered .ovf file.
+
+  autosave:
+    kind: function
+    params:
+      - name: quantity
+        type: quantity_expression
+      - name: period
+        type: float
+        units: s
+        constraint: "> 0"
+    notes: >
+      During a subsequent run() call, save 'quantity' every 'period' seconds.
+      Multiple autosave() calls can be active at once.
+      Example: autosave(m, 1e-10) saves m every 100 ps.
+
+  snapshot:
+    kind: function
+    params:
+      - name: quantity
+        type: quantity_expression
+    notes: "Save a PNG image of the current quantity (for quick visual inspection)."
+
+  tableadd:
+    kind: function
+    params:
+      - name: quantity
+        type: quantity_expression
+    notes: >
+      Add a column to the scalar output table (table.txt).
+      Must be called before tableautosave() or tablesave().
+      Common quantities to add: E_total, E_exch, E_demag, mx, my, mz,
+      ext_dwpos, ext_topologicalcharge.
+
+  tableautosave:
+    kind: function
+    params:
+      - name: period
+        type: float
+        units: s
+    notes: >
+      During run(), save the table every 'period' seconds.
+      The table accumulates columns added with tableadd().
+      Usually called with the same period as autosave(m, ...).
+
+  tablesave:
+    kind: function
+    params: []
+    notes: "Save the table once, right now (not periodic)."
+
+  fprintln:
+    kind: function
+    params:
+      - name: file
+        type: string
+      - name: values
+        type: variadic
+    notes: "Write formatted output to a file (useful for custom output)."
+
+
+# ─── Layer 9: Post-Processing / Extended Quantities ───────────────────────────
+
+post_processing:
+
+  ext_topologicalcharge:
+    kind: quantity
+    type: float
+    notes: >
+      Topological charge (skyrmion number) Q = (1/4π) ∫ m·(∂m/∂x × ∂m/∂y) dA.
+      Q = -1 for a single Néel skyrmion. Q = +1 for anti-skyrmion.
+
+  ext_topologicalchargedensity:
+    kind: quantity
+    type: scalar_field
+    notes: "Spatial map of the topological charge density."
+
+  ext_dwpos:
+    kind: quantity
+    type: float
+    units: m
+    notes: >
+      Domain wall position (x-coordinate of the magnetisation reversal boundary).
+      Useful for tracking domain wall velocity: v_DW = d(ext_dwpos)/dt.
+
+  ext_dwtilt:
+    kind: quantity
+    type: float
+    units: rad
+    notes: "Domain wall tilt angle relative to the y-axis."
+
+  ext_corepos:
+    kind: quantity
+    type: vector
+    notes: "Vortex or skyrmion core position (x, y, 0) in metres."
+
+  mx:
+    kind: quantity
+    type: float
+    notes: "Volume-averaged x-component of normalised magnetisation. -1 ≤ mx ≤ 1."
+
+  my:
+    kind: quantity
+    type: float
+    notes: "Volume-averaged y-component of normalised magnetisation."
+
+  mz:
+    kind: quantity
+    type: float
+    notes: "Volume-averaged z-component of normalised magnetisation."
+
+  B_demag:
+    kind: quantity
+    type: vector_field
+    units: T
+    notes: "Demagnetisation field vector field."
+
+  B_exch:
+    kind: quantity
+    type: vector_field
+    units: T
+    notes: "Exchange field vector field."
+
+  B_eff:
+    kind: quantity
+    type: vector_field
+    units: T
+    notes: "Total effective field (sum of all contributions)."
+
+  Torque:
+    kind: quantity
+    type: vector_field
+    notes: "Total LLG torque (useful for checking convergence)."
+
+  LLGtorque:
+    kind: quantity
+    type: vector_field
+    notes: "LLG precession + damping torque."
+
+
+# ─── Forbidden Constructs ─────────────────────────────────────────────────────
+
+forbidden_constructs:
+  description: >
+    These patterns are technically possible in the Go-based interpreter
+    but are considered errors or bad practice in well-formed simulation scripts.
+
+  items:
+    - name: "SetTemperature(T)"
+      reason: "Does not exist. Use: Temp = T"
+      hallucination: true
+
+    - name: "EnableSTT()"
+      reason: "Does not exist. Use: Jc = vector(...), pol = ..., xi = ..."
+      hallucination: true
+
+    - name: "EnableDMI(D)"
+      reason: "Does not exist. Use: Dind = D"
+      hallucination: true
+
+    - name: "EnableAnisotropy()"
+      reason: "Does not exist. Use: Ku1 = K, anisU = vector(...)"
+      hallucination: true
+
+    - name: "Box(wx, wy, wz)"
+      reason: "Not a shape constructor. Use: rect(wx, wy) for 2D rectangles."
+      hallucination: true
+
+    - name: "Dind and Dbulk both nonzero"
+      reason: "Interfacial and bulk DMI cannot both be active; they describe different materials."
+      logic_error: true
+
+    - name: "autosave without run"
+      reason: "Autosave only fires during run(). Without run(), no output is generated."
+      logic_error: true
+
+    - name: "Ku1 without anisU"
+      reason: "Anisotropy constant without easy axis direction is undefined."
+      logic_error: true
+
+    - name: "xi_DL without Jc"
+      reason: "SOT efficiency is meaningless without a current density."
+      logic_error: true
+
+
+# ─── Category-Required Symbol Sets ────────────────────────────────────────────
+
+category_requirements:
+  description: >
+    Minimum set of symbols required for each simulation category.
+    Scripts missing any of these are flagged as incomplete.
+
+  simple_relax:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - m
+    - relax
+
+  field_driven:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - m
+    - B_ext
+    - relax
+    - run
+    - autosave
+
+  dmi_skyrmion:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - Ku1
+    - anisU
+    - Dind
+    - m
+    - relax
+    - run
+
+  stt:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - Jc
+    - pol
+    - xi
+    - m
+    - relax
+    - run
+
+  sot:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - Jc
+    - xi_DL
+    - m
+    - relax
+    - run
+
+  thermal:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - Temp
+    - m
+    - relax
+    - run
+
+  multi_region:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - defRegion
+    - m
+    - relax
+
+  fft_analysis:
+    - SetGridsize
+    - SetCellsize
+    - Msat
+    - Aex
+    - alpha
+    - m
+    - B_ext
+    - relax
+    - run
+    - autosave
