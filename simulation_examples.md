@@ -1,4 +1,4 @@
-# Simulation Examples — Generated Scripts and Expected Results
+# Simulation Examples   Generated Scripts and Expected Results
 
 These are concrete examples of what NL2Sim produces for various inputs.
 For each example we show: the NL input, the extracted IR, the generated script,
@@ -6,7 +6,7 @@ and the expected physics output if the script were run in MuMax3.
 
 ---
 
-## Example 1 — Permalloy Domain Wall Motion (Field-Driven)
+## Example 1   Permalloy Domain Wall Motion (Field-Driven)
 
 ### Input
 ```
@@ -102,7 +102,7 @@ Total simulation produces 100 magnetisation snapshots and a table.txt with 100 r
 
 ---
 
-## Example 2 — CoFeB Skyrmion Nucleation (DMI)
+## Example 2   CoFeB Skyrmion Nucleation (DMI)
 
 ### Input
 ```
@@ -164,11 +164,11 @@ save(m)  // save equilibrium magnetisation
 | Total energy | ~8.5 × 10⁻¹⁸ J |
 | Exchange energy | ~1.2 × 10⁻¹⁸ J |
 | Anisotropy energy | ~2.1 × 10⁻¹⁸ J |
-| DMI energy | ~−4.8 × 10⁻¹⁸ J (negative — stabilises skyrmion) |
+| DMI energy | ~−4.8 × 10⁻¹⁸ J (negative   stabilises skyrmion) |
 
 ---
 
-## Example 3 — YIG Disk Spin-Wave Spectrum (FFT Analysis)
+## Example 3   YIG Disk Spin-Wave Spectrum (FFT Analysis)
 
 ### Input
 ```
@@ -218,41 +218,9 @@ tableadd(E_demag)
 run(5.0000e-08)   // 50.0 ns total
 ```
 
-### Expected Physics Output
 
-YIG has the lowest magnetic damping of any known material (α = 0.0002),
-making it ideal for spin-wave studies.
 
-**Expected FMR frequency** (Kittel formula for thin disk):
-f_FMR = (γ/2π) × sqrt(B_ext × (B_ext + μ₀×Msat))
-With B_bias = 50 mT and Msat = 140 kA/m:
-f_FMR ≈ 2.8 GHz / T × sqrt(0.05 × (0.05 + 0.176)) ≈ **3.4 GHz**
-
-**Expected spin-wave modes** (in a 500nm disk):
-- Uniform mode (0,0): ~3.4 GHz
-- First confined mode (1,0): ~3.9 GHz
-- Second confined mode (0,1): ~4.6 GHz
-
-**FFT spectrum** (computed from the time-domain mz data):
-```
-Power (a.u.)
-│
-│   ▲
-│   █ (0,0) mode
-│   █
-│   █    ▲
-│   █    █ (1,0)
-│   █    █   ▲
-│   █    █   █ (0,1)
-│───┼────┼───┼──────→ Frequency (GHz)
-│  3.4  3.9  4.6
-```
-
-The linewidth of each peak is ~0.2 GHz (corresponding to α = 0.0002 damping).
-
----
-
-## Example 4 — Permalloy Film Thermal Fluctuations (300K)
+## Example 4   Permalloy Film Thermal Fluctuations (300K)
 
 ### Input
 ```
@@ -303,7 +271,7 @@ run(5.0000e-09)   // 5.0 ns total
 ### Expected Physics Output
 
 At 300K, thermal fluctuations add stochastic noise to the LLG equation.
-The magnetisation will not follow a smooth trajectory — instead it fluctuates
+The magnetisation will not follow a smooth trajectory   instead it fluctuates
 around the equilibrium direction set by the applied field.
 
 **Expected behaviour**:
@@ -323,7 +291,7 @@ The MuMax3 random seed is controlled by:
 
 ---
 
-## Example 5 — Multi-Region Simulation (Permalloy/CoFeB Interface)
+## Example 5   Multi-Region Simulation (Permalloy/CoFeB Interface)
 
 ### Input
 ```
@@ -344,12 +312,12 @@ CoFeB on the right half. Apply a field and watch the interface dynamics.
 SetGridsize(512, 128, 1)
 SetCellsize(1.0000e-09, 1.0000e-09, 5.0000e-09)
 
-// Material (Region 0 — Permalloy, left half)
+// Material (Region 0   Permalloy, left half)
 Msat  = 8.0000e+05   // 800 kA/m
 Aex   = 1.3000e-11   // 13.0 pJ/m
 alpha = 0.01
 
-// Region 1 — CoFeB, right half
+// Region 1   CoFeB, right half
 defRegion(1, xrange(2.5600e-07, 5.1200e-07))
 MsatRegion(1) = 1.1000e+06
 AexRegion(1)  = 2.0000e-11
@@ -400,5 +368,5 @@ due to the different exchange stiffnesses.
 | 5. Multi-region | ✓ 100% | 0 | All present | ✓ |
 
 All 5 examples pass static validation with zero hallucinations.
-The template-based code generator guarantees this by construction —
+The template-based code generator guarantees this by construction  
 it only emits symbols from the API grammar schema.
